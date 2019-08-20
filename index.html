@@ -1,0 +1,651 @@
+<!-- Ashley He (ach238), Daniel Glus (dhg73), Kati Hsu (kyh24) -->
+<!-- vim: ts=4 et ai sw=4
+-- CS 3300,  5 March 2019 -->
+<html>
+
+<head>
+
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script src="https://d3js.org/d3.v5.min.js"></script>
+    <style>
+        body {
+            font-family: "Lato";
+        }
+
+        div {
+            margin: 30px;
+        }
+
+        h3 {
+            text-align: center;
+            margin-top: 20px;
+        }
+    </style>
+
+</head>
+
+<body>
+    <div id="info">
+        <div style="text-align:center;">
+            <svg id="summaryInfo" height="100" , width="800"></svg></div>
+    </div>
+
+    <div style="text-align:center;"><svg id="tree" width="1200" height="600"></svg></div>
+
+    <div id="info2">
+        <div style="text-align:center;">
+            <svg id="summaryInfo2" height="50" , width="800"></svg></div>
+
+    </div>
+
+    <div style="text-align:center;"><svg id="radar" width="800" height="800" viewBox="0 0 1200 1200"></svg></div>
+    <div id="radarLegend" class="legend"> </div>
+
+    <script type="text/javascript">
+        let svg = d3.select("svg#tree"),
+            width = svg.attr("width"), height = svg.attr("height"),
+            PADDING = { top: 0, bottom: 1, left: 0, right: 5 };
+
+        d3.csv("cilic-points-2.csv").then(function (allData) {
+            function translate(x, y) {
+                return "translate(" + x + "," + y + ")";
+            }
+
+            function arraySum(arr) {
+                return arr.reduce(function (a, b) { return a + b; }, 0);
+            }
+            function toFakeScore(score) {
+                function toFakePts(pts) {
+                    switch (pts) {
+                        case "0": return 0;
+                        case "15": return 1;
+                        case "30": return 2;
+                        case "40": return 3;
+                        case "AD": return 4;
+                        case "W": return 5;
+                    }
+                }
+                return score.split("-").map(toFakePts).join("");
+            }
+            function sector(cx, cy, angStartR, angEndR, r1, r2, x1, x2) {
+                angStartR = Math.min(angStartR, angEndR), angEndR = Math.max(angStartR, angEndR);
+                return " M " + (cx + r2 * Math.cos(angStartR)) + "," + (cy + r2 * Math.sin(angStartR)) +
+                    " A " + r2 + " " + r2 + " " + "0" + " 0 1 " +
+                    (cx + r2 * Math.cos(angEndR)) + "," + (cy + r2 * Math.sin(angEndR)) +
+                    " L " + (cx + r1 * Math.cos(angEndR)) + "," + (cy + r1 * Math.sin(angEndR)) +
+                    " A " + r1 + " " + r1 + " " + "0" + " 0 0 " +
+                    (cx + r1 * Math.cos(angStartR)) + "," + (cy + r1 * Math.sin(angStartR)) +
+                    " Z";
+            }
+
+            var SCALE = ["0", "15", "30", "40", "AD", "W"];
+            function fromFakeScore(score) {
+                var x = parseInt(score.charAt(0)), y = parseInt(score.charAt(1));
+                if (x === 5) return "W-L";
+                else if (y === 5) return "L-W";
+                else return SCALE[x] + "-" + SCALE[y];
+            }
+
+            function makeTransitions(allData) {
+                var player1 = [], player2 = [];
+                for (var i = 0; i < allData.length; i++) {
+                    if (allData[i].Svr === "1") {
+                        player1.push(allData[i]);
+                    } else {
+                        player2.push(allData[i]);
+                    }
+                }
+                var NUM_DIVS = 3;
+                return [player1, player2].map(function (data) {
+                    data = data.map(function (obj) {
+                        return [toFakeScore(obj.Pts),
+                        Math.floor(NUM_DIVS * (parseInt(obj.Pt)) / 281)];
+                    });
+                    var transitions = {};
+                    for (var i = 0; i < data.length - 1; i++) {
+                        var score1 = data[i][0];
+                        var score2 = data[i + 1][0];
+                        if (score2 === "00") {
+                            // a game was won
+                            var player1Won = parseInt(score1.charAt(0)) > parseInt(score1.charAt(1));
+                            var score2 = player1Won ? ('5' + score1.charAt(1)) : (score1.charAt(0) + '5');
+                        }
+                        // inner dictionary 1
+                        var x = transitions[score1];
+                        if (!x) x = {};
+
+                        var counts = x[score2];
+                        if (!counts) {
+                            counts = Array(NUM_DIVS);
+                            counts.fill(0);
+                        }
+
+                        var setCount = counts[data[i][1]];
+                        if (!setCount) setCount = 0;
+
+                        // increment number of times we've reached score "score2"
+                        // from score data[i][1]
+                        setCount++;
+                        counts[data[i][1]] = setCount;
+                        x[score2] = counts;
+                        transitions[data[i][0]] = x;
+                    }
+                    return transitions;
+                });
+            }
+
+            var GAP = 60; // standard grid spacing
+            function getLocation(score) {
+                var XOFF = 500, YOFF = 50;
+                var x = parseInt(score.charAt(0)), y = parseInt(score.charAt(1));
+                if( score === '53' ) { XOFF += GAP; YOFF += GAP; }
+                else if( score === '35' ) { XOFF -= GAP; YOFF += GAP; }
+                if (x === 5) x--;
+                if (y === 5) y--;
+                return [GAP * (x - y) + XOFF, GAP * (x + y) + YOFF];
+            }
+
+            var allScores = [];
+            for (var i = 0; i < 4; i++)
+                for (var j = 0; j < 4; j++)
+                    allScores.push(i + "" + j);
+            allScores.push("43"); // ADV-40
+            allScores.push("34"); // 40-ADV
+            for( var i = 0; i < 4; i++ ) {
+                allScores.push("5"+i);
+                allScores.push(i+"5");
+            }
+
+            // Transitions
+            //console.log(allData);
+            allData.push({
+                'Pts': "0-0", 'Svr': '1', 'Set1': '2',
+                'Set2': '2'
+            });
+            allData.push({
+                'Pts': "0-0", 'Svr': '2', 'Set1': '2',
+                'Set2': '2'
+            });
+            var allTransitions = makeTransitions(allData);
+            var strokeWidthScl = d3.scaleLinear().domain([0, 16]).range([3, 25]);
+            function idxToColor( idx, total ) {
+                return "hsl(200,50%," + (idx * (100 / total)) + "%)";
+            }
+            function drawTransitions(transitions, xOff, diagramIdx) {
+
+                function getColor(score) {
+                    var x = parseInt(score.charAt(0)), y = parseInt(score.charAt(1)),
+                        sign = Math.sign(x - y);
+                    if( !diagramIdx ) sign *= -1;
+                    switch(sign){
+                        case -1: return "#f7f";//"rgb(240, 128, 128)";
+                        case 0: return "rgb(211, 211, 211)";
+                        case 1: return "rgb(152, 251, 152)";
+                    }
+                }
+
+                var container = svg.append("g")
+                    .attr("transform", translate(xOff, 0));
+                Object.keys(transitions).forEach(function (s1) {
+                    Object.keys(transitions[s1]).forEach(function (s2) {
+                        if(((s1==='34'||s1==='43')&&s2==='33')||
+                        ((s2==='34'||s2==='43')&&s1==='33'))return; // we draw AD-X and X-AD separately
+                        var loc1 = getLocation(s1),
+                            loc2 = getLocation(s2),
+                            ttlXDiff = loc2[0] - loc1[0],
+                            ttlYDiff = loc2[1] - loc1[1],
+                            counts = transitions[s1][s2],
+                            totalCount = arraySum(counts),
+                            normCounts = counts.map(function (x) { return x / totalCount; }),
+                            width = strokeWidthScl(totalCount),
+                            cumulCounts = [];
+                        var segments = container.append("g")
+                            .attr("stroke-width", width);
+                        for (var i = 0; i < counts.length; i++) {
+                            prevCumulCount = cumulCounts[i - 1] || 0;
+                            cumulCounts[i] = prevCumulCount + normCounts[i];
+                            segments.append("line")
+                                .attr("x1", loc1[0] + ttlXDiff * prevCumulCount)
+                                .attr("y1", loc1[1] + ttlYDiff * prevCumulCount)
+                                .attr("x2", loc1[0] + ttlXDiff * cumulCounts[i])
+                                .attr("y2", loc1[1] + ttlYDiff * cumulCounts[i])
+                                .attr("stroke", idxToColor( i, counts.length ) );
+                        }
+                    });
+                }); // end outer forEach on the "transitions" keys
+
+                // Draw the AD-40 and 40-AD transitions
+                var keyAngle = Math.PI / 2; // the angle that the curved transitions will cover
+                var ARC_RAD = GAP;
+                var ffLoc = getLocation('33'); // location of the 40-40 score circle
+                ['43','34'].forEach(function(otherScore) {
+                    // ffFirst is true if the 40-40 score comes first
+                    [false,true].forEach(function(ffFirst){
+                        if(ffFirst && otherScore === '34' && diagramIdx === 0)return;
+                        var s1 = ffFirst ? '33' : otherScore,
+                            s2 = ffFirst ? otherScore : '33';
+                        var arcCenter = null,
+                            anglesCovered = null;
+                        if( ffFirst ) {
+                            arcCenter = [ffLoc[0],ffLoc[1]+GAP];
+                            if( otherScore === '43' ) {
+                                anglesCovered = [Math.PI/2,0];
+                            } else {
+                                anglesCovered = [Math.PI/2,Math.PI];
+                            }
+                        } else {
+                            if( otherScore === '43' ) {
+                                arcCenter = [ffLoc[0]+GAP,ffLoc[1]];
+                                anglesCovered = [3*Math.PI/2,Math.PI];
+                            } else {
+                                arcCenter = [ffLoc[0]-GAP,ffLoc[1]];
+                                anglesCovered = [3*Math.PI/2,0];
+                            }
+                        }
+                        var otherLoc = getLocation(otherScore);
+                        var loc1 = getLocation(s1),
+                            loc2 = getLocation(s2),
+                            ttlXDiff = loc2[0] - loc1[0],
+                            ttlYDiff = loc2[1] - loc1[1],
+                            counts = (transitions[s1]||[])[s2] || [0,0,0],
+                            totalCount = arraySum(counts),
+                            normCounts = counts.map(function (x) { return x / totalCount; }),
+                            width = strokeWidthScl(totalCount),
+                            cumulCounts = [];
+                        var segments = container.append("g");
+                        for (var i = 0; i < counts.length; i++) {
+                            if(normCounts[i]===0)continue;
+                            var prevCumulCount = cumulCounts[i - 1] || 0;
+                            cumulCounts[i] = prevCumulCount + normCounts[i];
+                            var startAngle = (anglesCovered[1]-anglesCovered[0])* prevCumulCount + anglesCovered[0] + (otherScore==='34'?1:-1)*Math.PI/2;
+                                endAngle = (anglesCovered[1]-anglesCovered[0])* cumulCounts[i] +anglesCovered[0] + (Math.PI/2 * (otherScore==='34'?1:-1));
+                            console.log(i,startAngle*(180/Math.PI),endAngle*(180/Math.PI));
+                            //container.append("line").attr("x1",arcCenter[0]).attr("y1",arcCenter[1]).attr("x2",(arcCenter[0]+ARC_RAD*Math.cos(endAngle))).attr("y2",(arcCenter[1]+ARC_RAD*Math.sin(endAngle))).style("stroke","red");
+                            segments.append( "path" )
+                                .style( "stroke", idxToColor( i, counts.length ) )
+                            .style("stroke-width",strokeWidthScl(totalCount))
+                            .style("fill","none")
+                                .attr( "d", "M " + (arcCenter[0] + ARC_RAD*Math.cos(startAngle)) + " " + (arcCenter[1]+ARC_RAD*Math.sin(startAngle)) +
+                                    " A " + ARC_RAD + " " + ARC_RAD + " 0 0 0 " + (arcCenter[0]+ARC_RAD*Math.cos(endAngle)) + " " + (arcCenter[1]+ARC_RAD*Math.sin(endAngle)) );
+                                //.attr( "d", "M " + loc1[0] + " " + loc1[1] +
+                                //    " A " + ARC_RAD + " " + ARC_RAD + " 0 0 0 " + loc2[0] + " " + loc2[1] );
+                            //.attr( "d", sector(
+                            //        arcCenter[0],
+                            //        arcCenter[1],
+                            //        anglesCovered[0],
+                            //        anglesCovered[1],
+                            //        inRadius,
+                            //        outRadius ) );
+                        }
+                    } );
+                } );
+
+
+
+                // Circles
+                allScores.forEach(function (s) {
+                    var loc = getLocation(s);
+                    container.append("circle")
+                        .attr("cx", loc[0])
+                        .attr("cy", loc[1])
+                        .attr("fill", getColor(s))
+                        .attr("r", 15)
+                    container.append("text")
+                        .text(fromFakeScore(s))
+                        .attr("text-anchor", "middle")
+                        .attr("dominant-baseline", "middle")
+                        .attr("font-family", "Lato")
+                        .attr("font-size", 10)
+                        .attr("x", loc[0])
+                        .attr("y", loc[1]);
+                });
+
+
+            } // end drawTransitions
+
+            var SEP = 540;
+            drawTransitions(allTransitions[0],-SEP/2+100,0);
+            drawTransitions(allTransitions[1], SEP / 2+100,1);
+            makeAxes(0, 8);
+        }).catch(function (err) { console.error(err); });
+
+        ///////// Radar Chart \\\\\\\\\
+
+        let svg2 = d3.select("svg#radar"),
+            width2 = svg2.attr("width"), height2 = svg2.attr("height");
+
+        var data =
+            [{ axis: "% Aces", value: 17.27 },
+            //{ axis: "% Double Faults", value: 28.77 },
+            { axis: "First Serve %", value: 60.43 },
+            { axis: "Second Serves %", value: 39.57 },
+            { axis: "% First Serve Points Won ", value: 48.20 },
+            { axis: "% Second Serve Points Won", value: 23.02 },
+            { axis: "% Winners", value: 31.65 },
+            { axis: "% Unforced Errors", value: 29.5 },
+            { axis: "Return Point Win %", value: 37.6 },
+            { axis: "Break Point Win %", value: 77.8 }]
+            ;
+        var moreData = [
+            "0.113475177 0.035460993 0.624113475 0.375886525 0.432624113 0.191489362 0.34751773 0.439716312 0.287769784 0.538461538",
+            //"0.042553191 0.010638298 0.563829787 0.436170213 0.393617021 0.223404255 0.234042553 0.212765957 0.28125 0.5",
+            //"0.127659574 0.010638298 0.64893617 0.35106383 0.521276596 0.14893617 0.478723404 0.340425532 0.411111111 0.5",
+            //"0.033333333 0.033333333 0.677777778 0.322222222 0.455555556 0.133333333 0.288888889 0.222222222 0.329787234 0.375"
+        ].map(parseSpacedData).map(function (list) { return [list[0]].concat(list.slice(2)) });
+
+        function parseSpacedData(someStr) {
+            return someStr.split(' ').map(parseFloat).map(x => x * 100);
+        }
+        var categories = data.map(getter("axis"));
+        var values = data.map(getter("value"));
+        let NUM_CATS = categories.length;
+        let MAX_PERCENT = 100;
+
+        function getter(attrName) {
+            return function (obj) {
+                return obj[attrName];
+            };
+        }
+        function getterMap(attrName, f) {
+            return function (obj) {
+                return f(obj[attrName]);
+            };
+        }
+        function translate(x, y) {
+            return "translate(" + x + "," + y + ")";
+        }
+
+        function getLocation(cat, radius) {
+            let ang = cat / NUM_CATS * Math.PI * 2 + Math.PI / 6;
+            return [radius * Math.cos(ang), radius * Math.sin(ang)];
+        }
+
+        var XOFF = 600;
+        var YOFF = 600;
+        var R = 400;
+
+        var radiusScl = d3.scaleLinear().domain([0, 100]).range([0, R]);
+
+        var graph = svg2.append("g")
+            .attr("transform", translate(XOFF, YOFF));
+
+        // background circles and labels for them
+        var percentageLabels = graph.append('g')
+            .attr('font-size', '19')
+            .attr('dominant-baseline', 'baseline')
+            .attr('font-family', 'Lato')
+            .attr('text-anchor', 'middle');
+        for (var i = 20; i <= MAX_PERCENT; i += 20) {
+            graph.append("circle")
+                .attr("cx", 0)
+                .attr("cy", 0)
+                .attr('fill', '#0000')
+                .attr('stroke', '#0006')
+                .attr("r", radiusScl(i));
+
+            percentageLabels.append("text")
+                .text(i + "%")
+                .attr('x', '0')
+                .attr('y', -radiusScl(i));
+        }
+        // labels for categories
+        var labels = graph.append('g')
+            .attr('dominant-baseline', 'middle')
+            .attr('font-family', 'Lato')
+            .attr('text-anchor', 'middle')
+            .attr('font-size', '19');
+
+        categories.forEach(function (v, i) {
+            var loc = getLocation(i, radiusScl(MAX_PERCENT));
+            graph.append("line")
+                .attr('x1', '0').attr('y1', '0')
+                .attr('x2', loc[0]).attr('y2', loc[1])
+                .attr('stroke', '#0004');
+            loc = getLocation(i, radiusScl(MAX_PERCENT + 23));
+            labels.append("text")
+                .text(v)
+                .attr('x', loc[0]).attr('y', loc[1])
+        });
+
+        function plotBlob(values, baseColor) {
+
+            var path = "M";
+            for (var i = 0; i < NUM_CATS; i++) {
+                path += getLocation(i, radiusScl(values[i])).join(',') + " ";
+            }
+            path += 'z';
+
+            graph.append("path")
+                .attr("stroke", 'green')
+                .attr("fill", '#' + baseColor + '22')
+                .attr('d', path);
+
+            values.forEach(function (v, i) {
+                var loc = getLocation(i, radiusScl(v));
+                graph.append('circle')
+                    .attr('cx', loc[0])
+                    .attr('cy', loc[1])
+                    .attr('fill', '#' + baseColor)
+                    .attr('r', 5);
+            });
+        }
+
+        plotBlob(values, '77ff77')
+        var colors = ['ff77ff', 'f7f7f7', 'f7fff7', 'fff777'];
+        moreData.forEach(function (d, i) { plotBlob(d, colors[i]) });
+
+
+        // add title for GAME PROGRESSION
+        var titleGameTree = svg.append("g")
+            .attr("class", "legend")
+            .attr("height", 100)
+            .attr("width", 600)
+            .attr('transform', 'translate(470,0)')
+        titleGameTree.append("text")
+            .attr("x", 130)
+            .attr("y", 20)
+            .attr("text-anchor", "middle")
+            .attr('font-size', '20')
+            .style("font-weight", "bold")
+            .style("text-decoration", "underline")
+            .text("Australian Open 2018 Final: Marin Cilic v. Roger Federer Point Progression")
+        var scoringPos = 90;
+        titleGameTree.append("text")
+            .attr("font-size", "13px")
+            .attr("x", scoringPos)
+            .attr("y", 50)
+            .text("Scoring:")
+            .append("tspan")
+            .attr("x", scoringPos)
+            .attr("dy", 20)
+            .text("0 points - 0 (Love)")
+            .append("tspan")
+            .attr("x", scoringPos)
+            .attr("dy", 20)
+            .text("1 point - 15")
+            .append("tspan")
+            .attr("x", scoringPos)
+            .attr("dy", 20)
+            .text("2 points - 30")
+            .append("tspan")
+            .attr("x", scoringPos)
+            .attr("dy", 20)
+            .text("3 points - 40")
+            .append("tspan")
+            .attr("x", scoringPos)
+            .attr("dy", 20)
+            .text("4 points - Game")
+
+
+        // add title for RADAR
+        var title = svg2.append("g")
+            .attr("class", "legend")
+            .attr("height", 100)
+            .attr("width", 800)
+            .attr('transform', 'translate(0,0)')
+        title.append("text")
+            .attr("x", 597)
+            .attr("y", 20)
+            .attr("text-anchor", "middle")
+            .attr('font-size', '24')
+            .style("font-weight", "bold")
+            .style("text-decoration", "underline")
+            .text("Australian Open 2018 Final: Marin Cilic v. Roger Federer Match Statistics");
+
+        // add legend   
+        var legend = svg2.append("g")
+            .attr("class", "legend")
+            //.attr("x", w - 65)
+            //.attr("y", 50)
+            .attr("height", 100)
+            .attr("width", 100)
+            .attr('transform', 'translate(-20,50)')
+
+
+        // Roger Federer legend label
+        legend.append("text")
+            .attr("x", 1059)
+            .attr("y", 150)
+            .attr('font-size', '19')
+            .text("Roger Federer");
+
+        // Marin Cilic legend label
+        legend.append("text")
+            .attr("x", 74)
+            .attr("y", 150)
+            .attr('font-size', '19')
+            .text("Marin Cilic");
+
+        // Adds Cilic's picture to a circle for the legend
+        var imgPath = "./images/cilic.png"
+        var defs = svg2.append("defs");
+        var id = "cilic_img";
+        var imgPattern = defs.append("pattern")
+            .attr("id", id)
+            .attr("x", 0)
+            .attr("y", 0)
+            .attr("width", 1)
+            .attr("height", 1);
+        imgPattern.append("image")
+            .attr("x", 0)
+            .attr("y", 0)
+            .attr("width", 120)
+            .attr("height", 120)
+            .attr("xlink:href", imgPath);
+        svg2.append("circle")
+            .attr("cx", 100)
+            .attr("cy", 120)
+            .attr("r", 60)
+            .attr("stroke", "#ff77ff")
+            .attr("stroke-opacity", 0.5)
+            .attr("stroke-width", "8px")
+            .attr("fill", "url(#" + id + ")");
+        var imgPath2 = "./images/federer.png"
+
+        var id2 = "federer_img";
+        var imgPath2 = "./images/federer.png";
+        var defs2 = svg2.append("defs");
+        // Adds Federer's picture to a circle for the legend
+        var imgPattern2 = defs2.append("pattern")
+            .attr("id", id2)
+            .attr("x", 0)
+            .attr("y", 0)
+            .attr("width", 1)
+            .attr("height", 1);
+        imgPattern2.append("image")
+            .attr("x", 0)
+            .attr("y", 0)
+            .attr("width", 120)
+            .attr("height", 120)
+            .attr("xlink:href", imgPath2);
+        svg2.append("circle")
+            .attr("cx", 1100)
+            .attr("cy", 120)
+            .attr("r", 60)
+            .attr("stroke", "#77ff77")
+            .attr("stroke-opacity", 0.5)
+            .attr("stroke-width", "8px")
+            .attr("fill", "url(#" + id2 + ")");
+
+
+        // Title and summary info
+
+        var summaryInfo = d3.select("#summaryInfo");
+        var summaryInfo2 = d3.select("#summaryInfo2");
+        let widthInfo = summaryInfo.attr("width"), heightInfo = summaryInfo.attr("height");
+
+        summaryInfo.append("text")
+            .attr("x", widthInfo / 2)
+            .attr("y", 40)
+            .style("font-size", "36px")
+            .style("font-weight", "bold")
+            .style("letter-spacing", "0.5px")
+            .style("text-transform", "uppercase")
+            .attr("alignment-baseline", "middle")
+            .attr("text-anchor", "middle")
+            .text("GAME, SET, MATCH!")
+        summaryInfo.append("text")
+            .append("tspan")
+            .style("font-weight", "500")
+            .style("font-size", "15px")
+            .attr("x", widthInfo / 2)
+            .attr("y", 60)
+            .attr("alignment-baseline", "middle")
+            .attr("text-anchor", "middle")
+            .text("Looking at how professional tennis players perform under high pressure situations.")
+
+        summaryInfo2.append("text")
+            .append("tspan")
+            .style("font-weight", "500")
+            .style("font-size", "15px")
+            .attr("x", 30)
+            .attr("dy", 20)
+            .text("*Left side shows Marin Cilic serving, right side shows Roger Federer serving.")
+            .append("tspan")
+            .style("font-weight", "500")
+            .style("font-size", "15px")
+            .attr("x", 30)
+            .attr("dy", 15)
+            .text("Key statistics can show whether one player dominated another, played more aggressively or more consistently than")
+            .append("tspan")
+            .style("font-weight", "500")
+            .style("font-size", "15px")
+            .attr("x", 30)
+            .attr("dy", 20)
+            .text("the other, and how their playing styles influenced the outcome of the match.");
+
+
+
+        function makeAxes(minPoints, maxPoints) {
+            let yScale = d3.scaleLinear().domain([minPoints, maxPoints]).range([20, 510]);
+            let xOff = 50,
+                yOff = 25;
+
+            // Y axis points
+            let leftAxis = d3.axisLeft(yScale)
+                .ticks(9).tickFormat("");
+            let leftAxisMinor = d3.axisLeft(yScale)
+                .ticks(10)
+                .tickSize(5);
+
+            svg.append("g")
+                .attr("class", "y axis")
+                .attr("transform", "translate(" + xOff + "," + yOff + ")")
+                .call(leftAxis);
+            svg.append("g")
+                .attr("class", "y axis")
+                .attr("transform", "translate(" + xOff + "," + yOff + ")")
+                .call(leftAxisMinor);
+
+            svg.append("text")
+                .attr("transform", "rotate(-90)")
+                .attr("y", (5))
+                .attr("x", -(250+yOff))
+                .attr("dy", "1em")
+                .style("text-anchor", "middle")
+                .text("Number of Points Played");
+        }
+    </script>
+
+</body>
